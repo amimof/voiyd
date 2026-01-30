@@ -550,7 +550,7 @@
         "msg": {
           "type": "string"
         },
-        "observedResourceVersion": {
+        "observedGeneration": {
           "type": "string",
           "format": "uint64"
         },

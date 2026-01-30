@@ -94,6 +94,7 @@ func (l *local) Acquire(ctx context.Context, req *leasesv1.AcquireRequest, _ ...
 					Updated:         timestamppb.Now(),
 					ResourceVersion: 1,
 					Generation:      1,
+					Uid:             uuid.New().String(),
 				},
 				Config: &leasesv1.LeaseConfig{
 					TaskId:     req.TaskId,

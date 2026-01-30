@@ -21,6 +21,7 @@ import (
 	"github.com/amimof/voiyd/pkg/logger"
 	"github.com/amimof/voiyd/pkg/protoutils"
 	"github.com/amimof/voiyd/pkg/repository"
+	"github.com/google/uuid"
 
 	nodesv1 "github.com/amimof/voiyd/api/services/nodes/v1"
 	typesv1 "github.com/amimof/voiyd/api/types/v1"
@@ -146,6 +147,7 @@ func (l *local) Create(ctx context.Context, req *nodesv1.CreateRequest, _ ...grp
 	node.GetMeta().Updated = timestamppb.Now()
 	node.GetMeta().ResourceVersion = 1
 	node.GetMeta().Generation = 1
+	node.GetMeta().Uid = uuid.New().String()
 
 	// Initialize status field if empty
 	if node.GetStatus() == nil {

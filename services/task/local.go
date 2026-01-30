@@ -23,6 +23,7 @@ import (
 	"github.com/amimof/voiyd/pkg/logger"
 	"github.com/amimof/voiyd/pkg/protoutils"
 	"github.com/amimof/voiyd/pkg/repository"
+	"github.com/google/uuid"
 
 	tasksv1 "github.com/amimof/voiyd/api/services/tasks/v1"
 	"github.com/amimof/voiyd/api/types/v1"
@@ -223,6 +224,7 @@ func (l *local) Create(ctx context.Context, req *tasksv1.CreateRequest, _ ...grp
 	task.GetMeta().Updated = timestamppb.Now()
 	task.GetMeta().Generation = 1
 	task.GetMeta().ResourceVersion = 1
+	task.GetMeta().Uid = uuid.New().String()
 
 	// Initialize status field if empty
 	if task.GetStatus() == nil {
@@ -501,18 +503,6 @@ func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grp
 
 // Condition implements [tasks.TaskServiceClient].
 func (l *local) Condition(ctx context.Context, req *types.ConditionRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	// l.mu.Lock()
-	// defer l.mu.Unlock()
-	//
-	// currentTask, err := l.Get(ctx, &tasksv1.GetRequest{Id: req.GetReport().GetResourceId()})
-	// if err != nil {
-	// 	return nil, l.handleError(err, "error getting task")
-	// }
-	//
-	// if currentTask.GetTask().GetMeta().GetResourceVersion() > uint64(req.GetReport().GetObservedResourceVersion())+1 {
-	// 	return nil, status.Error(codes.FailedPrecondition, "observed resource version is too old")
-	// }
-
 	err := l.exchange.Publish(ctx, events.NewEvent(events.ConditionReported, req))
 	if err != nil {
 		return nil, err

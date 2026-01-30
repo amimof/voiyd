@@ -79,17 +79,10 @@ func (c *Controller) scheduleTask(ctx context.Context, task *tasksv1.Task) error
 		return c.clientset.TaskV1().Condition(ctx, reporter.Type(condition.TaskScheduled).False(condition.ReasonSchedulingFailed, "no nodes matches node selector"))
 	}
 
-	// At this point the task can be scheduled
-	// lease, err := c.clientset.LeaseV1().Get(ctx, task.GetMeta().GetName())
-	// if err != nil {
-	// 	c.logger.Error("error getting lease", "error", "task", taskID)
-	// 	exists = false
-	// }
-
 	// Find a node fit for the task using a scheduler
 	n, err := c.scheduler.Schedule(ctx, task)
 	if err != nil {
-		_ = c.clientset.TaskV1().Condition(ctx, reporter.Type(condition.TaskScheduled).True(condition.ReasonSchedulingFailed, err.Error()))
+		_ = c.clientset.TaskV1().Condition(ctx, reporter.Type(condition.TaskScheduled).False(condition.ReasonSchedulingFailed, err.Error()))
 		return err
 	}
 

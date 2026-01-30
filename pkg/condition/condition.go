@@ -84,8 +84,8 @@ type Resource interface {
 func NewReport(resourceID string, gen uint64) *Report {
 	return &Report{
 		report: &typesv1.ConditionReport{
-			ResourceId:              resourceID,
-			ObservedResourceVersion: gen,
+			ResourceId:         resourceID,
+			ObservedGeneration: gen,
 		},
 	}
 }
@@ -97,9 +97,9 @@ func NewReportFor(task *tasksv1.Task) *Report {
 func NewForResource(res Resource) *Report {
 	return &Report{
 		report: &typesv1.ConditionReport{
-			ResourceId:              res.GetMeta().GetName(),
-			ObservedResourceVersion: res.GetMeta().GetResourceVersion(),
-			ObservedAt:              timestamppb.Now(),
+			ResourceId:         res.GetMeta().GetName(),
+			ObservedGeneration: res.GetMeta().GetResourceVersion(),
+			ObservedAt:         timestamppb.Now(),
 		},
 	}
 }

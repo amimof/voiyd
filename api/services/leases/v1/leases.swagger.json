@@ -144,6 +144,12 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "nodeId",
+            "in": "query",
+            "required": false,
+            "type": "string"
           }
         ],
         "tags": [
@@ -364,11 +370,18 @@
         },
         "updated": {
           "type": "string",
-          "format": "date-time"
+          "format": "date"
         },
-        "revision": {
+        "generation": {
           "type": "string",
           "format": "uint64"
+        },
+        "resourceVersion": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "uid": {
+          "type": "string"
         }
       }
     },

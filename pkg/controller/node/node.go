@@ -109,7 +109,7 @@ func (c *Controller) Run(ctx context.Context) {
 	c.clientset.EventV1().On(events.NodeDelete, c.onNodeDelete)
 	c.clientset.EventV1().On(events.NodeConnect, c.onNodeConnect)
 	c.clientset.EventV1().On(events.Schedule, events.HandleErrors(c.logger, events.HandleScheduling(c.onSchedule)))
-	c.clientset.EventV1().On(events.TaskDelete, events.HandleErrors(c.logger, events.HandleTask(c.deleteTask)))
+	c.clientset.EventV1().On(events.TaskDelete, events.HandleErrors(c.logger, events.HandleTask(c.stopTask)))
 	c.clientset.EventV1().On(events.TaskStop, events.HandleErrors(c.logger, events.HandleTask(c.stopTask)))
 	c.clientset.EventV1().On(events.TaskKill, events.HandleErrors(c.logger, events.HandleTask(c.killTask)))
 	c.clientset.EventV1().On(events.TailLogsStart, events.HandleErrors(c.logger, c.onLogStart))
@@ -239,7 +239,11 @@ func (c *Controller) renewAllLeases(ctx context.Context) {
 		// Renew lease
 		renewed, err := c.clientset.LeaseV1().Renew(ctx, taskName, nodeName)
 		if err != nil {
-			c.logger.Error("error renewing lease", "error", err, "task", taskName, "node", nodeName)
+			c.logger.Debug("couldn't renew lease, stopping task", "task", taskName)
+			if err := c.stopTask(ctx, task); err != nil {
+				c.logger.Error("error stopping task", "error", err, "task", taskName)
+				continue
+			}
 			continue
 		}
 

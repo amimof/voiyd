@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 
-	"buf.build/go/protovalidate"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -77,28 +76,25 @@ func (l *local) Create(ctx context.Context, req *volumes.CreateRequest, opts ...
 	ctx, span := tracer.Start(ctx, "volume.Create")
 	defer span.End()
 
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	volume := req.GetVolume()
-	volume.GetMeta().Created = timestamppb.Now()
-	volume.GetMeta().Updated = timestamppb.Now()
-	volume.GetMeta().Revision = 1
-
-	// Deprecated: Validate request
-
-	// NEW: validate with buf
-	if err := protovalidate.Validate(req); err != nil {
-		return nil, err
-	}
-
-	// Initialize status field if empty
-	if volume.GetStatus() == nil {
-		volume.Status = &volumes.Status{}
-	}
-
 	volumeID := volume.GetMeta().GetName()
 
 	// Check if volume already exists
 	if existing, _ := l.Get(ctx, &volumes.GetRequest{Id: volumeID}); existing != nil {
 		return nil, fmt.Errorf("volume %s already exists", volume.GetMeta().GetName())
+	}
+
+	volume.GetMeta().Created = timestamppb.Now()
+	volume.GetMeta().Updated = timestamppb.Now()
+	volume.GetMeta().ResourceVersion = 1
+	volume.GetMeta().Generation = 1
+
+	// Initialize status field if empty
+	if volume.GetStatus() == nil {
+		volume.Status = &volumes.Status{}
 	}
 
 	// Create volume in repo
@@ -214,7 +210,9 @@ func (l *local) UpdateStatus(ctx context.Context, req *volumes.UpdateStatusReque
 		return nil, status.Errorf(codes.InvalidArgument, "bad mask: %v", err)
 	}
 
+	existingVolume.GetMeta().ResourceVersion++
 	existingVolume.Status = base
+
 	if err := l.Repo().Update(ctx, existingVolume); err != nil {
 		return nil, err
 	}
@@ -242,17 +240,18 @@ func (l *local) Update(ctx context.Context, req *volumes.UpdateRequest, opts ...
 	}
 
 	// Ignore fields
+	updateVolume.GetMeta().ResourceVersion++
 	updateVolume.Status = existingVolume.Status
 	updateVolume.GetMeta().Updated = existingVolume.Meta.Updated
 	updateVolume.GetMeta().Created = existingVolume.Meta.Created
-	updateVolume.GetMeta().Revision = existingVolume.Meta.Revision
+	updateVolume.GetMeta().ResourceVersion = existingVolume.Meta.ResourceVersion
 
 	updVal := protoreflect.ValueOfMessage(updateVolume.GetConfig().ProtoReflect())
 	newVal := protoreflect.ValueOfMessage(existingVolume.GetConfig().ProtoReflect())
 
 	// Only update metadata fields if spec is updated
 	if !updVal.Equal(newVal) {
-		updateVolume.Meta.Revision++
+		updateVolume.Meta.Generation++
 		updateVolume.Meta.Updated = timestamppb.Now()
 	}
 
@@ -276,7 +275,7 @@ func (l *local) Update(ctx context.Context, req *volumes.UpdateRequest, opts ...
 		eventLabels.Set(labels.LabelPrefix("object-id").String(), volume.GetMeta().GetName())
 		eventLabels.Set(labels.LabelPrefix("object-version").String(), volume.GetVersion())
 
-		l.logger.Debug("volume was updated, emitting event to listeners", "event", "VolumeUpdate", "name", volume.GetMeta().GetName(), "revision", updateVolume.GetMeta().GetRevision())
+		l.logger.Debug("volume was updated, emitting event to listeners", "event", "VolumeUpdate", "name", volume.GetMeta().GetName(), "revision", updateVolume.GetMeta().GetGeneration())
 		err = l.exchange.Forward(ctx, events.NewEvent(events.VolumeUpdate, volume, eventLabels))
 		if err != nil {
 			return nil, l.handleError(err, "error publishing UPDATE event", "name", volume.GetMeta().GetName(), "event", "VolumeUpdate")

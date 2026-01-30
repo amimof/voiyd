@@ -81,27 +81,32 @@ type Resource interface {
 	GetMeta() *typesv1.Meta
 }
 
-func NewReport(resourceID string, gen int64) *Report {
+func NewReport(resourceID string, gen uint64) *Report {
 	return &Report{
 		report: &typesv1.ConditionReport{
-			ResourceId:         resourceID,
-			ObservedGeneration: gen,
+			ResourceId:              resourceID,
+			ObservedResourceVersion: gen,
 		},
 	}
 }
 
 func NewReportFor(task *tasksv1.Task) *Report {
-	return NewReport(task.GetMeta().GetName(), int64(task.GetMeta().GetRevision()))
+	return NewReport(task.GetMeta().GetName(), task.GetMeta().GetGeneration())
 }
 
 func NewForResource(res Resource) *Report {
 	return &Report{
 		report: &typesv1.ConditionReport{
-			ResourceId:         res.GetMeta().GetName(),
-			ObservedGeneration: int64(res.GetMeta().GetRevision()),
-			ObservedAt:         timestamppb.Now(),
+			ResourceId:              res.GetMeta().GetName(),
+			ObservedResourceVersion: res.GetMeta().GetResourceVersion(),
+			ObservedAt:              timestamppb.Now(),
 		},
 	}
+}
+
+func (r *Report) As(name string) *Report {
+	r.report.Reporter = name
+	return r
 }
 
 func (r *Report) Report() *typesv1.ConditionReport {

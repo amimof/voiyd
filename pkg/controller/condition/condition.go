@@ -62,20 +62,46 @@ func (c *Controller) validateGeneration(observedGen, currentGen uint64) bool {
 	return true
 }
 
-func (c *Controller) onNodeCondition(ctx context.Context, report *typesv1.ConditionReport, n *nodesv1.Node) error {
-	resourceID := report.GetResourceId()
-	observedGen := report.GetObservedGeneration()
-	expectedGen := n.GetMeta().GetRevision()
-
-	// Validate generation (prevent stale updates)
-	if !c.validateGeneration(uint64(observedGen), expectedGen) {
-		c.logger.Warn("skipping stale condition report",
-			"node", resourceID,
-			"observedGen", observedGen,
-			"currentGen", expectedGen)
-		return nil
+func (c *Controller) validateLease(ctx context.Context, task *tasksv1.Task, reportedHolder string) bool {
+	taskID := task.GetMeta().GetName()
+	lease, err := c.clientset.LeaseV1().Get(ctx, taskID)
+	if err != nil {
+		c.logger.Warn("lease validation failed, error getting lease for task", "error", err, "task", taskID)
+		return false
 	}
 
+	expectedHolder := lease.GetConfig().GetNodeId()
+
+	if expectedHolder != reportedHolder {
+		c.logger.Warn("report is invalid, reporter is not the lease holder", "holder", expectedHolder, "reporter", reportedHolder)
+		return false
+	}
+
+	return true
+}
+
+func (c *Controller) onNodeCondition(ctx context.Context, report *typesv1.ConditionReport, n *nodesv1.Node) error {
+	resourceID := report.GetResourceId()
+	// observedVer := report.GetObservedResourceVersion()
+	// expectedVer := n.GetMeta().GetResourceVersion()
+
+	// // Validate generation (prevent stale updates)
+	// valid, err := c.validateResourceVersion(uint64(observedVer), expectedVer)
+	// if err != nil {
+	// 	c.logger.Warn("error validating resource", "error", err, "observedVer", observedVer, "currentVer", expectedVer)
+	// 	return err
+	// }
+	//
+	// if !valid {
+	// 	c.logger.Warn("skipping stale condition report",
+	// 		"reason", report.GetReason(),
+	// 		"status", report.GetStatus(),
+	// 		"node", resourceID,
+	// 		"observedVer", observedVer,
+	// 		"currentVer", expectedVer)
+	// 	return nil
+	// }
+	//
 	// Convert ConditionReport to Condition
 	newCondition := reportToCondition(report, n.GetStatus().GetConditions())
 
@@ -107,15 +133,18 @@ func (c *Controller) onNodeCondition(ctx context.Context, report *typesv1.Condit
 
 func (c *Controller) onTaskCondition(ctx context.Context, report *typesv1.ConditionReport, t *tasksv1.Task) error {
 	resourceID := report.GetResourceId()
-	observedGen := report.GetObservedGeneration()
-	expectedGen := t.GetMeta().GetRevision()
+	observedVer := report.GetObservedResourceVersion()
+	expectedVer := t.GetMeta().GetResourceVersion()
+	reporterID := report.GetReporter()
 
 	// Validate generation (prevent stale updates)
-	if !c.validateGeneration(uint64(observedGen), expectedGen) {
+	if !c.validateLease(ctx, t, reporterID) {
 		c.logger.Warn("skipping stale condition report",
-			"task", resourceID,
-			"observedGen", observedGen,
-			"currentGen", expectedGen)
+			"reason", report.GetReason(),
+			"status", report.GetStatus(),
+			"node", resourceID,
+			"observedVer", observedVer,
+			"currentVer", expectedVer)
 		return nil
 	}
 
@@ -152,7 +181,7 @@ func (c *Controller) onTaskCondition(ctx context.Context, report *typesv1.Condit
 }
 
 func (c *Controller) onConditionReported(ctx context.Context, report *typesv1.ConditionReport, resourceVersion string) error {
-	c.logger.Debug("condition controller received a report", "resource_version", resourceVersion, "resource", report.GetResourceId(), "observedGeneration", report.GetObservedGeneration())
+	c.logger.Debug("condition controller received a report", "resource_version", resourceVersion, "resource", report.GetResourceId(), "observedGeneration", report.GetObservedResourceVersion())
 
 	resourceID := report.GetResourceId()
 

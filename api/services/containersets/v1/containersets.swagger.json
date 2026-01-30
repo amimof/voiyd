@@ -96,11 +96,18 @@
                     },
                     "updated": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date"
                     },
-                    "revision": {
+                    "generation": {
                       "type": "string",
                       "format": "uint64"
+                    },
+                    "resourceVersion": {
+                      "type": "string",
+                      "format": "uint64"
+                    },
+                    "uid": {
+                      "type": "string"
                     }
                   }
                 },
@@ -175,11 +182,18 @@
                     },
                     "updated": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date"
                     },
-                    "revision": {
+                    "generation": {
                       "type": "string",
                       "format": "uint64"
+                    },
+                    "resourceVersion": {
+                      "type": "string",
+                      "format": "uint64"
+                    },
+                    "uid": {
+                      "type": "string"
                     }
                   }
                 },
@@ -477,11 +491,18 @@
         },
         "updated": {
           "type": "string",
-          "format": "date-time"
+          "format": "date"
         },
-        "revision": {
+        "generation": {
           "type": "string",
           "format": "uint64"
+        },
+        "resourceVersion": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "uid": {
+          "type": "string"
         }
       }
     },

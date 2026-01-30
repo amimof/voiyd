@@ -136,14 +136,16 @@ func (l *local) Create(ctx context.Context, req *nodesv1.CreateRequest, _ ...grp
 	defer l.mu.Unlock()
 
 	node := req.GetNode()
+	nodeID := node.GetMeta().GetName()
+
 	if existing, _ := l.Repo().Get(ctx, node.GetMeta().GetName()); existing != nil {
 		return nil, status.Error(codes.AlreadyExists, "node already exists")
 	}
 
-	nodeID := node.GetMeta().GetName()
-	node.GetMeta().Created = timestamppb.Now()
+	node.Meta.Created = timestamppb.Now()
 	node.GetMeta().Updated = timestamppb.Now()
-	node.GetMeta().Revision = 1
+	node.GetMeta().ResourceVersion = 1
+	node.GetMeta().Generation = 1
 
 	// Initialize status field if empty
 	if node.GetStatus() == nil {
@@ -192,7 +194,7 @@ func (l *local) Delete(ctx context.Context, req *nodesv1.DeleteRequest, _ ...grp
 
 	err = l.exchange.Forward(ctx, events.NewEvent(events.NodeDelete, node, eventLabels))
 	if err != nil {
-		return nil, l.handleError(err, "error publishing DELETE event", "name", req.GetId(), "event", "ContainerDelete")
+		return nil, l.handleError(err, "error publishing DELETE event", "name", req.GetId(), "event", "nodeDelete")
 	}
 	return &nodesv1.DeleteResponse{
 		Id: req.Id,
@@ -219,25 +221,27 @@ func (l *local) UpdateStatus(ctx context.Context, req *nodesv1.UpdateStatusReque
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Get the existing container before updating so we can compare specs
-	existingContainer, err := l.Repo().Get(ctx, req.GetId())
+	// Get the existing node before updating so we can compare specs
+	existingNode, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
 	}
 
 	// Apply mask safely
-	base := proto.Clone(existingContainer.Status).(*nodesv1.Status)
+	base := proto.Clone(existingNode.Status).(*nodesv1.Status)
 	if err := applyMaskedUpdate(base, req.Status, req.UpdateMask); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "bad mask: %v", err)
 	}
 
-	existingContainer.Status = base
-	if err := l.Repo().Update(ctx, existingContainer); err != nil {
+	existingNode.GetMeta().ResourceVersion++
+	existingNode.Status = base
+
+	if err := l.Repo().Update(ctx, existingNode); err != nil {
 		return nil, err
 	}
 
 	return &nodesv1.UpdateStatusResponse{
-		Id: existingContainer.GetMeta().GetName(),
+		Id: existingNode.GetMeta().GetName(),
 	}, nil
 }
 
@@ -273,26 +277,26 @@ func (l *local) Patch(ctx context.Context, req *nodesv1.PatchRequest, opts ...gr
 	updated := maskedUpdate.(*nodesv1.Node)
 	existing = merge(existing, updated)
 
-	// Update the container
+	// Update the node
 	err = l.Repo().Update(ctx, existing)
 	if err != nil {
 		return nil, l.handleError(err, "couldn't PATCH node in repo", "name", existing.GetMeta().GetName())
 	}
 
-	// Retreive the container again so that we can include it in an event
+	// Retreive the node again so that we can include it in an event
 	node, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
 	}
 
+	updateNode.GetMeta().ResourceVersion++
 	updateNode.Status = node.Status
 	updateNode.GetMeta().Updated = node.Meta.Updated
 	updateNode.GetMeta().Created = node.Meta.Created
-	updateNode.GetMeta().Revision = node.Meta.Revision
 
 	// Only publish if spec is updated
 	if !proto.Equal(updateNode, node) {
-		l.logger.Debug("node was patched, emitting event to listeners", "event", "NodePatch", "name", node.GetMeta().GetName(), "revision", updateNode.GetMeta().GetRevision())
+		l.logger.Debug("node was patched, emitting event to listeners", "event", "NodePatch", "name", node.GetMeta().GetName(), "revision", updateNode.GetMeta().GetGeneration())
 
 		// Decorate label with some labels
 		eventLabels := labels.New()
@@ -326,17 +330,17 @@ func (l *local) Update(ctx context.Context, req *nodesv1.UpdateRequest, _ ...grp
 	}
 
 	// Ignore fields
+	updateNode.GetMeta().ResourceVersion++
 	updateNode.Status = existingNode.Status
 	updateNode.GetMeta().Updated = existingNode.Meta.Updated
 	updateNode.GetMeta().Created = existingNode.Meta.Created
-	updateNode.GetMeta().Revision = existingNode.Meta.Revision
 
 	updVal := protoreflect.ValueOfMessage(updateNode.ProtoReflect())
 	newVal := protoreflect.ValueOfMessage(existingNode.ProtoReflect())
 
 	// Only update metadata fields if spec is updated
 	if !updVal.Equal(newVal) {
-		updateNode.Meta.Revision++
+		updateNode.Meta.Generation++
 		updateNode.Meta.Updated = timestamppb.Now()
 	}
 
@@ -346,7 +350,7 @@ func (l *local) Update(ctx context.Context, req *nodesv1.UpdateRequest, _ ...grp
 		return nil, l.handleError(err, "couldn't UPDATE node in repo", "name", updateNode.GetMeta().GetName())
 	}
 
-	// Retreive the container again so that we can include it in an event
+	// Retreive the node again so that we can include it in an event
 	node, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
@@ -354,7 +358,7 @@ func (l *local) Update(ctx context.Context, req *nodesv1.UpdateRequest, _ ...grp
 
 	// Only publish if spec is updated
 	if !updVal.Equal(newVal) {
-		l.logger.Debug("node was updated, emitting event to listeners", "event", "NodeUpdate", "name", node.GetMeta().GetName(), "revision", updateNode.GetMeta().GetRevision())
+		l.logger.Debug("node was updated, emitting event to listeners", "event", "NodeUpdate", "name", node.GetMeta().GetName(), "revision", updateNode.GetMeta().GetGeneration())
 
 		// Decorate label with some labels
 		eventLabels := labels.New()
@@ -381,7 +385,7 @@ func (l *local) Join(ctx context.Context, req *nodesv1.JoinRequest, _ ...grpc.Ca
 	node, err := l.Repo().Get(ctx, nodeID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			l.logger.Debug("creating node that jonied", "nodeID", nodeID)
+			l.logger.Debug("creating node that joined", "nodeID", nodeID)
 			if _, err := l.Create(ctx, &nodesv1.CreateRequest{Node: req.GetNode()}); err != nil {
 				return nil, l.handleError(err, "couldn't CREATE node", "name", nodeID)
 			}
@@ -392,7 +396,7 @@ func (l *local) Join(ctx context.Context, req *nodesv1.JoinRequest, _ ...grpc.Ca
 
 	// Perform update if node exists
 	if err == nil {
-		l.logger.Debug("updating node that jonied", "nodeID", nodeID)
+		l.logger.Debug("updating node that joined", "nodeID", nodeID)
 		res, err := l.Update(ctx, &nodesv1.UpdateRequest{Id: nodeID, Node: req.GetNode()})
 		if err != nil {
 			return nil, err

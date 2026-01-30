@@ -52,7 +52,7 @@ func NewCmdDeleteLease(cfg *client.Config) *cobra.Command {
 				if err != nil {
 					logrus.Errorf("error getting lease %s: %v", lname, err)
 				}
-				err = c.LeaseV1().Release(ctx, lease.GetConfig().GetTaskId())
+				err = c.LeaseV1().Release(ctx, lease.GetConfig().GetTaskId(), lease.GetConfig().GetNodeId())
 				if err != nil {
 					logrus.Fatal(err)
 				}

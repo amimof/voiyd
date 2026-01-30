@@ -35,15 +35,6 @@ type local struct {
 	logger   logger.Logger
 }
 
-// Condition implements [tasks.TaskServiceClient].
-func (l *local) Condition(ctx context.Context, req *types.ConditionRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	err := l.exchange.Publish(ctx, events.NewEvent(events.ConditionReported, req))
-	if err != nil {
-		return nil, err
-	}
-	return nil, nil
-}
-
 var (
 	_      tasksv1.TaskServiceClient = &local{}
 	tracer                           = otel.GetTracerProvider().Tracer("voiyd-server")
@@ -57,6 +48,56 @@ func (l *local) handleError(err error, msg string, keysAndValues ...any) error {
 		return status.Error(codes.NotFound, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
+}
+
+func applyMaskedUpdate(dst, src *tasksv1.Status, mask *fieldmaskpb.FieldMask) error {
+	if mask == nil || len(mask.Paths) == 0 {
+		return status.Error(codes.InvalidArgument, "update_mask is required")
+	}
+
+	for _, p := range mask.Paths {
+		switch p {
+		case "ip":
+			if src.Ip == nil {
+				continue
+			}
+			dst.Ip = src.Ip
+		case "node":
+			if src.Node == nil {
+				continue
+			}
+			dst.Node = src.Node
+		case "phase":
+			if src.Phase == nil {
+				continue
+			}
+			dst.Phase = src.Phase
+		case "id":
+			if src.Id == nil {
+				continue
+			}
+			dst.Id = src.Id
+		case "reason":
+			if src.Reason == nil {
+				continue
+			}
+			dst.Reason = src.Reason
+		case "pid":
+			if src.Pid == nil {
+				continue
+			}
+			dst.Pid = src.Pid
+		case "conditions":
+			if src.Conditions == nil {
+				continue
+			}
+			dst.Conditions = src.Conditions
+		default:
+			return fmt.Errorf("unknown mask path %q", p)
+		}
+	}
+
+	return nil
 }
 
 // Merge lists strategically using merge keys
@@ -128,35 +169,35 @@ func merge(base, patch *tasksv1.Task) *tasksv1.Task {
 }
 
 func (l *local) Get(ctx context.Context, req *tasksv1.GetRequest, _ ...grpc.CallOption) (*tasksv1.GetResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Get", trace.WithSpanKind(trace.SpanKindServer))
+	ctx, span := tracer.Start(ctx, "task.Get", trace.WithSpanKind(trace.SpanKindServer))
 	span.SetAttributes(
 		attribute.String("service", "Task"),
-		attribute.String("container.id", req.GetId()),
+		attribute.String("task.id", req.GetId()),
 	)
 	defer span.End()
 
-	// Get container from repo
-	container, err := l.Repo().Get(ctx, req.GetId())
+	// Get task from repo
+	task, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		span.RecordError(err)
-		return nil, l.handleError(err, "couldn't GET container from repo", "name", req.GetId())
+		return nil, l.handleError(err, "couldn't GET task from repo", "name", req.GetId())
 	}
 
-	span.SetAttributes(attribute.String("container.name", container.GetMeta().GetName()))
+	span.SetAttributes(attribute.String("task.name", task.GetMeta().GetName()))
 
 	return &tasksv1.GetResponse{
-		Task: container,
+		Task: task,
 	}, nil
 }
 
 func (l *local) List(ctx context.Context, req *tasksv1.ListRequest, _ ...grpc.CallOption) (*tasksv1.ListResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.List")
+	ctx, span := tracer.Start(ctx, "task.List")
 	defer span.End()
 
-	// Get containers from repo
+	// Get tasks from repo
 	ctrs, err := l.Repo().List(ctx, req.GetSelector())
 	if err != nil {
-		return nil, l.handleError(err, "couldn't LIST containers from repo")
+		return nil, l.handleError(err, "couldn't LIST tasks from repo")
 	}
 	return &tasksv1.ListResponse{
 		Tasks: ctrs,
@@ -164,37 +205,38 @@ func (l *local) List(ctx context.Context, req *tasksv1.ListRequest, _ ...grpc.Ca
 }
 
 func (l *local) Create(ctx context.Context, req *tasksv1.CreateRequest, _ ...grpc.CallOption) (*tasksv1.CreateResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Create")
+	ctx, span := tracer.Start(ctx, "task.Create")
 	defer span.End()
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	task := req.GetTask()
+	taskID := task.GetMeta().GetName()
+
+	// Check if task already exists
+	if existing, _ := l.Get(ctx, &tasksv1.GetRequest{Id: taskID}); existing != nil {
+		return nil, fmt.Errorf("task %s already exists", task.GetMeta().GetName())
+	}
+
 	task.GetMeta().Created = timestamppb.Now()
 	task.GetMeta().Updated = timestamppb.Now()
-	task.GetMeta().Revision = 1
+	task.GetMeta().Generation = 1
+	task.GetMeta().ResourceVersion = 1
 
 	// Initialize status field if empty
 	if task.GetStatus() == nil {
 		task.Status = &tasksv1.Status{}
 	}
 
-	containerID := task.GetMeta().GetName()
-
-	// Check if container already exists
-	if existing, _ := l.Get(ctx, &tasksv1.GetRequest{Id: containerID}); existing != nil {
-		return nil, fmt.Errorf("container %s already exists", task.GetMeta().GetName())
-	}
-
-	// Create container in repo
+	// Create task in repo
 	err := l.Repo().Create(ctx, task)
 	if err != nil {
-		return nil, l.handleError(err, "couldn't CREATE container in repo", "name", containerID)
+		return nil, l.handleError(err, "couldn't CREATE task in repo", "name", taskID)
 	}
 
-	// Get the created container from repo
-	task, err = l.Repo().Get(ctx, containerID)
+	// Get the created task from repo
+	task, err = l.Repo().Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +246,7 @@ func (l *local) Create(ctx context.Context, req *tasksv1.CreateRequest, _ ...grp
 	eventLabels.Set(labels.LabelPrefix("object-id").String(), task.GetMeta().GetName())
 	eventLabels.Set(labels.LabelPrefix("object-version").String(), task.GetVersion())
 
-	// Publish event that container is created
+	// Publish event that task is created
 	err = l.exchange.Forward(ctx, events.NewEvent(events.TaskCreate, task, eventLabels))
 	if err != nil {
 		return nil, l.handleError(err, "error publishing CREATE event", "name", task.GetMeta().GetName(), "event", "TaskCreate")
@@ -218,7 +260,7 @@ func (l *local) Create(ctx context.Context, req *tasksv1.CreateRequest, _ ...grp
 // Delete publishes a delete request and the subscribers are responsible for deleting resources.
 // Once they do, they will update there resource with the status Deleted
 func (l *local) Delete(ctx context.Context, req *tasksv1.DeleteRequest, _ ...grpc.CallOption) (*tasksv1.DeleteResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Delete")
+	ctx, span := tracer.Start(ctx, "task.Delete")
 	defer span.End()
 
 	l.mu.Lock()
@@ -226,7 +268,7 @@ func (l *local) Delete(ctx context.Context, req *tasksv1.DeleteRequest, _ ...grp
 
 	task, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
-		return nil, l.handleError(err, "couldn't GET container from repo", "id", req.GetId())
+		return nil, l.handleError(err, "couldn't GET task from repo", "id", req.GetId())
 	}
 	err = l.Repo().Delete(ctx, req.GetId())
 	if err != nil {
@@ -248,7 +290,7 @@ func (l *local) Delete(ctx context.Context, req *tasksv1.DeleteRequest, _ ...grp
 }
 
 func (l *local) Kill(ctx context.Context, req *tasksv1.KillRequest, _ ...grpc.CallOption) (*tasksv1.KillResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Kill")
+	ctx, span := tracer.Start(ctx, "task.Kill")
 	defer span.End()
 
 	task, err := l.Repo().Get(ctx, req.GetId())
@@ -276,7 +318,7 @@ func (l *local) Kill(ctx context.Context, req *tasksv1.KillRequest, _ ...grpc.Ca
 }
 
 func (l *local) Start(ctx context.Context, req *tasksv1.StartRequest, _ ...grpc.CallOption) (*tasksv1.StartResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Start")
+	ctx, span := tracer.Start(ctx, "task.Start")
 	defer span.End()
 
 	task, err := l.Repo().Get(ctx, req.GetId())
@@ -300,7 +342,7 @@ func (l *local) Start(ctx context.Context, req *tasksv1.StartRequest, _ ...grpc.
 }
 
 func (l *local) Patch(ctx context.Context, req *tasksv1.PatchRequest, _ ...grpc.CallOption) (*tasksv1.PatchResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Patch")
+	ctx, span := tracer.Start(ctx, "task.Patch")
 	defer span.End()
 
 	l.mu.Lock()
@@ -308,10 +350,10 @@ func (l *local) Patch(ctx context.Context, req *tasksv1.PatchRequest, _ ...grpc.
 
 	updateTask := req.GetTask()
 
-	// Get existing container from repo
+	// Get existing task from repo
 	existing, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
-		return nil, l.handleError(err, "couldn't GET container from repo", "name", updateTask.GetMeta().GetName())
+		return nil, l.handleError(err, "couldn't GET task from repo", "name", updateTask.GetMeta().GetName())
 	}
 
 	// Generate field mask
@@ -329,14 +371,16 @@ func (l *local) Patch(ctx context.Context, req *tasksv1.PatchRequest, _ ...grpc.
 	// TODO: Handle errors
 	updated := maskedUpdate.(*tasksv1.Task)
 	existing = merge(existing, updated)
+	existing.GetMeta().Generation++
+	existing.GetMeta().ResourceVersion++
 
-	// Update the container
+	// Update the task
 	err = l.Repo().Update(ctx, existing)
 	if err != nil {
-		return nil, l.handleError(err, "couldn't PATCH container in repo", "name", existing.GetMeta().GetName())
+		return nil, l.handleError(err, "couldn't PATCH task in repo", "name", existing.GetMeta().GetName())
 	}
 
-	// Retreive the container again so that we can include it in an event
+	// Retreive the task again so that we can include it in an event
 	task, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
@@ -361,65 +405,15 @@ func (l *local) Patch(ctx context.Context, req *tasksv1.PatchRequest, _ ...grpc.
 	}, nil
 }
 
-func applyMaskedUpdate(dst, src *tasksv1.Status, mask *fieldmaskpb.FieldMask) error {
-	if mask == nil || len(mask.Paths) == 0 {
-		return status.Error(codes.InvalidArgument, "update_mask is required")
-	}
-
-	for _, p := range mask.Paths {
-		switch p {
-		case "ip":
-			if src.Ip == nil {
-				continue
-			}
-			dst.Ip = src.Ip
-		case "node":
-			if src.Node == nil {
-				continue
-			}
-			dst.Node = src.Node
-		case "phase":
-			if src.Phase == nil {
-				continue
-			}
-			dst.Phase = src.Phase
-		case "id":
-			if src.Id == nil {
-				continue
-			}
-			dst.Id = src.Id
-		case "reason":
-			if src.Reason == nil {
-				continue
-			}
-			dst.Reason = src.Reason
-		case "pid":
-			if src.Pid == nil {
-				continue
-			}
-			dst.Pid = src.Pid
-		case "conditions":
-			if src.Conditions == nil {
-				continue
-			}
-			dst.Conditions = src.Conditions
-		default:
-			return fmt.Errorf("unknown mask path %q", p)
-		}
-	}
-
-	return nil
-}
-
-// UpdateStatus implements containers.TaskServiceClient.
+// UpdateStatus implements tasks.TaskServiceClient.
 func (l *local) UpdateStatus(ctx context.Context, req *tasksv1.UpdateStatusRequest, opts ...grpc.CallOption) (*tasksv1.UpdateStatusResponse, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	ctx, span := tracer.Start(ctx, "container.UpdateStatus")
+	ctx, span := tracer.Start(ctx, "task.UpdateStatus")
 	defer span.End()
 
-	// Get the existing container before updating so we can compare specs
+	// Get the existing task before updating so we can compare specs
 	existingTask, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
@@ -431,7 +425,9 @@ func (l *local) UpdateStatus(ctx context.Context, req *tasksv1.UpdateStatusReque
 		return nil, status.Errorf(codes.InvalidArgument, "bad mask: %v", err)
 	}
 
+	existingTask.GetMeta().ResourceVersion++
 	existingTask.Status = base
+
 	if err := l.Repo().Update(ctx, existingTask); err != nil {
 		return nil, err
 	}
@@ -442,7 +438,7 @@ func (l *local) UpdateStatus(ctx context.Context, req *tasksv1.UpdateStatusReque
 }
 
 func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grpc.CallOption) (*tasksv1.UpdateResponse, error) {
-	ctx, span := tracer.Start(ctx, "container.Update")
+	ctx, span := tracer.Start(ctx, "task.Update")
 	defer span.End()
 
 	l.mu.Lock()
@@ -450,7 +446,7 @@ func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grp
 
 	updateTask := req.GetTask()
 
-	// Get the existing container before updating so we can compare specs
+	// Get the existing task before updating so we can compare specs
 	existingTask, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
@@ -458,26 +454,26 @@ func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grp
 
 	// Ignore fields
 	updateTask.Status = existingTask.Status
+	updateTask.GetMeta().ResourceVersion++
 	updateTask.GetMeta().Updated = existingTask.Meta.Updated
 	updateTask.GetMeta().Created = existingTask.Meta.Created
-	updateTask.GetMeta().Revision = existingTask.Meta.Revision
 
 	updVal := protoreflect.ValueOfMessage(updateTask.GetConfig().ProtoReflect())
 	newVal := protoreflect.ValueOfMessage(existingTask.GetConfig().ProtoReflect())
 
 	// Only update metadata fields if spec is updated
 	if !updVal.Equal(newVal) {
-		updateTask.Meta.Revision++
+		updateTask.Meta.Generation++
 		updateTask.Meta.Updated = timestamppb.Now()
 	}
 
-	// Update the container
+	// Update the task
 	err = l.Repo().Update(ctx, updateTask)
 	if err != nil {
-		return nil, l.handleError(err, "couldn't UPDATE container in repo", "name", updateTask.GetMeta().GetName())
+		return nil, l.handleError(err, "couldn't UPDATE task in repo", "name", updateTask.GetMeta().GetName())
 	}
 
-	// Retreive the container again so that we can include it in an event
+	// Retreive the task again so that we can include it in an event
 	task, err := l.Repo().Get(ctx, req.GetId())
 	if err != nil {
 		return nil, err
@@ -491,7 +487,7 @@ func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grp
 		eventLabels.Set(labels.LabelPrefix("object-id").String(), task.GetMeta().GetName())
 		eventLabels.Set(labels.LabelPrefix("object-version").String(), task.GetVersion())
 
-		l.logger.Debug("container was updated, emitting event to listeners", "event", "TaskUpdate", "name", task.GetMeta().GetName(), "revision", updateTask.GetMeta().GetRevision())
+		l.logger.Debug("task was updated, emitting event to listeners", "event", "TaskUpdate", "name", task.GetMeta().GetName(), "revision", updateTask.GetMeta().GetGeneration())
 		err = l.exchange.Forward(ctx, events.NewEvent(events.TaskUpdate, task, eventLabels))
 		if err != nil {
 			return nil, l.handleError(err, "error publishing UPDATE event", "name", task.GetMeta().GetName(), "event", "TaskUpdate")
@@ -501,6 +497,27 @@ func (l *local) Update(ctx context.Context, req *tasksv1.UpdateRequest, _ ...grp
 	return &tasksv1.UpdateResponse{
 		Task: task,
 	}, nil
+}
+
+// Condition implements [tasks.TaskServiceClient].
+func (l *local) Condition(ctx context.Context, req *types.ConditionRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	// l.mu.Lock()
+	// defer l.mu.Unlock()
+	//
+	// currentTask, err := l.Get(ctx, &tasksv1.GetRequest{Id: req.GetReport().GetResourceId()})
+	// if err != nil {
+	// 	return nil, l.handleError(err, "error getting task")
+	// }
+	//
+	// if currentTask.GetTask().GetMeta().GetResourceVersion() > uint64(req.GetReport().GetObservedResourceVersion())+1 {
+	// 	return nil, status.Error(codes.FailedPrecondition, "observed resource version is too old")
+	// }
+
+	err := l.exchange.Publish(ctx, events.NewEvent(events.ConditionReported, req))
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (l *local) Repo() repository.TaskRepository {

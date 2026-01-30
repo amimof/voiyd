@@ -128,7 +128,7 @@ func (s *EventService) Forward(ctx context.Context, event *eventsv1.Event) error
 	}
 	ev.GetMeta().Created = timestamppb.Now()
 	ev.GetMeta().Updated = timestamppb.Now()
-	ev.GetMeta().Revision = 1
+	ev.GetMeta().ResourceVersion = 1
 
 	_, err := s.local.Create(ctx, &eventsv1.CreateRequest{Event: ev})
 	if err != nil {
@@ -147,7 +147,7 @@ func (s *EventService) Publish(ctx context.Context, req *eventsv1.PublishRequest
 	}
 	ev.GetMeta().Created = timestamppb.Now()
 	ev.GetMeta().Updated = timestamppb.Now()
-	ev.GetMeta().Revision = 1
+	ev.GetMeta().ResourceVersion = 1
 
 	err := s.exchange.Publish(ctx, ev)
 	if err != nil {

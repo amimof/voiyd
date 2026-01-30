@@ -5,12 +5,10 @@ import (
 	"context"
 	"errors"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/amimof/voiyd/pkg/events"
 	"github.com/amimof/voiyd/pkg/logger"
@@ -123,13 +121,6 @@ func (s *EventService) Subscribe(req *eventsv1.SubscribeRequest, stream eventsv1
 func (s *EventService) Forward(ctx context.Context, event *eventsv1.Event) error {
 	ev := event
 
-	if ev.GetMeta().GetName() == "" {
-		ev.GetMeta().Name = uuid.New().String()
-	}
-	ev.GetMeta().Created = timestamppb.Now()
-	ev.GetMeta().Updated = timestamppb.Now()
-	ev.GetMeta().Revision = 1
-
 	_, err := s.local.Create(ctx, &eventsv1.CreateRequest{Event: ev})
 	if err != nil {
 		return err
@@ -142,19 +133,12 @@ func (s *EventService) Forward(ctx context.Context, event *eventsv1.Event) error
 func (s *EventService) Publish(ctx context.Context, req *eventsv1.PublishRequest) (*eventsv1.PublishResponse, error) {
 	ev := req.GetEvent()
 
-	if ev.GetMeta().GetName() == "" {
-		ev.GetMeta().Name = uuid.New().String()
-	}
-	ev.GetMeta().Created = timestamppb.Now()
-	ev.GetMeta().Updated = timestamppb.Now()
-	ev.GetMeta().Revision = 1
-
-	err := s.exchange.Publish(ctx, ev)
+	res, err := s.local.Create(ctx, &eventsv1.CreateRequest{Event: ev})
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := s.local.Create(ctx, &eventsv1.CreateRequest{Event: ev})
+	err = s.exchange.Publish(ctx, res.GetEvent())
 	if err != nil {
 		return nil, err
 	}

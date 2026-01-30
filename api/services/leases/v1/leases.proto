@@ -75,6 +75,7 @@ message RenewResponse {
 message ReleaseRequest {
   string id = 1;
   string task_id = 2;
+  string node_id = 3;
 }
 
 message ReleaseResponse {

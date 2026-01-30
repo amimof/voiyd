@@ -15,6 +15,17 @@ message Meta {
   ];
   map<string, string> labels = 2;
   google.protobuf.Timestamp created = 3 [(grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {format: "date"}];
-  google.protobuf.Timestamp updated = 4;
-  uint64 revision = 5;
+  google.protobuf.Timestamp updated = 4 [(grpc.gateway.protoc_gen_openapiv2.options.openapiv2_field) = {format: "date"}];
+  uint64 generation = 5 [
+    (buf.validate.field).uint64.gt = 0,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  uint64 resource_version = 6 [
+    (buf.validate.field).uint64.gt = 0,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
+  string uid = 7 [
+    (buf.validate.field).string.uuid = true,
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE
+  ];
 }

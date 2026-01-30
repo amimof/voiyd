@@ -5,8 +5,10 @@ import (
 
 	eventsv1 "github.com/amimof/voiyd/api/services/events/v1"
 	"github.com/amimof/voiyd/pkg/repository"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type local struct {
@@ -24,6 +26,19 @@ var (
 func (n *local) Create(ctx context.Context, req *eventsv1.CreateRequest, _ ...grpc.CallOption) (*eventsv1.CreateResponse, error) {
 	ctx, span := tracer.Start(ctx, "event.Create")
 	defer span.End()
+
+	ev := req.GetEvent()
+	uid := uuid.New().String()
+
+	if ev.GetMeta().GetName() == "" {
+		ev.GetMeta().Name = uid
+	}
+
+	ev.GetMeta().Created = timestamppb.Now()
+	ev.GetMeta().Updated = timestamppb.Now()
+	ev.GetMeta().ResourceVersion = 1
+	ev.GetMeta().Generation = 1
+	ev.GetMeta().Uid = uid
 
 	err := n.repo.Create(ctx, req.GetEvent())
 	if err != nil {

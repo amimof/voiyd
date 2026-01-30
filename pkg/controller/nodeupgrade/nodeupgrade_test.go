@@ -89,8 +89,9 @@ func TestDownloadBinary_Success(t *testing.T) {
 		Return(&nodesv1.GetResponse{
 			Node: &nodesv1.Node{
 				Meta: &typesv1.Meta{
-					Name:     "test-node",
-					Revision: 1,
+					Name:            "test-node",
+					Generation:      1,
+					ResourceVersion: 1,
 				},
 			},
 		}, nil).

@@ -323,11 +323,18 @@
                     },
                     "updated": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date"
                     },
-                    "revision": {
+                    "generation": {
                       "type": "string",
                       "format": "uint64"
+                    },
+                    "resourceVersion": {
+                      "type": "string",
+                      "format": "uint64"
+                    },
+                    "uid": {
+                      "type": "string"
                     }
                   }
                 },
@@ -405,11 +412,18 @@
                     },
                     "updated": {
                       "type": "string",
-                      "format": "date-time"
+                      "format": "date"
                     },
-                    "revision": {
+                    "generation": {
                       "type": "string",
                       "format": "uint64"
+                    },
+                    "resourceVersion": {
+                      "type": "string",
+                      "format": "uint64"
+                    },
+                    "uid": {
+                      "type": "string"
                     }
                   }
                 },
@@ -591,7 +605,7 @@
         },
         "observedGeneration": {
           "type": "string",
-          "format": "int64"
+          "format": "uint64"
         },
         "observedAt": {
           "type": "string",
@@ -602,6 +616,9 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "reporter": {
+          "type": "string"
         }
       }
     },
@@ -702,11 +719,18 @@
         },
         "updated": {
           "type": "string",
-          "format": "date-time"
+          "format": "date"
         },
-        "revision": {
+        "generation": {
           "type": "string",
           "format": "uint64"
+        },
+        "resourceVersion": {
+          "type": "string",
+          "format": "uint64"
+        },
+        "uid": {
+          "type": "string"
         }
       }
     },

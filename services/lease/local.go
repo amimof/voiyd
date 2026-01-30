@@ -89,10 +89,12 @@ func (l *local) Acquire(ctx context.Context, req *leasesv1.AcquireRequest, _ ...
 			lease := &leasesv1.Lease{
 				Version: Version,
 				Meta: &types.Meta{
-					Name:     uuid.New().String(),
-					Created:  timestamppb.Now(),
-					Updated:  timestamppb.Now(),
-					Revision: 1,
+					Name:            uuid.New().String(),
+					Created:         timestamppb.Now(),
+					Updated:         timestamppb.Now(),
+					ResourceVersion: 1,
+					Generation:      1,
+					Uid:             uuid.New().String(),
 				},
 				Config: &leasesv1.LeaseConfig{
 					TaskId:     req.TaskId,
@@ -153,6 +155,11 @@ func (l *local) Release(ctx context.Context, req *leasesv1.ReleaseRequest, _ ...
 		return &leasesv1.ReleaseResponse{Released: false}, l.handleError(err, "error getting lease")
 	}
 
+	// Decline release request if nodeID does match current lease holder
+	if lease.GetConfig().GetNodeId() != req.GetNodeId() {
+		return nil, status.Error(codes.InvalidArgument, "cannot release lease on behalf of another lease holder")
+	}
+
 	err = l.repo.Delete(ctx, req.TaskId)
 	if err != nil {
 		return nil, l.handleError(err, "error releasing lease", "lease", lease.GetMeta().GetName())
@@ -197,6 +204,8 @@ func (l *local) renew(ctx context.Context, taskID, nodeID string) (*leasesv1.Lea
 	existing.GetConfig().RenewTime = timestamppb.Now()
 	existing.GetConfig().ExpiresAt = timestamppb.New(time.Now().Add(time.Duration(existing.GetConfig().GetTtlSeconds()) * time.Second))
 	existing.GetConfig().NodeId = nodeID
+	existing.GetMeta().ResourceVersion++
+	existing.GetMeta().Generation++
 
 	err = l.repo.Update(ctx, existing)
 	if err != nil {

@@ -3,7 +3,6 @@ package nodecontroller
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/containerd/errdefs"
 	gocni "github.com/containerd/go-cni"
@@ -35,14 +34,16 @@ func (c *Controller) killTask(ctx context.Context, task *tasksv1.Task) error {
 
 	// Release lease
 	defer func() {
-		err := c.clientset.LeaseV1().Release(ctx, taskID)
+		err := c.clientset.LeaseV1().Release(ctx, taskID, nodeID)
 		if err != nil {
 			c.logger.Warn("unable to release lease", "error", err, "task", taskID, "nodeID", nodeID)
 		}
 	}()
 
+	report := condition.NewForResource(task).As(c.node.GetMeta().GetName())
+
 	// Detach network
-	err := c.detachNetwork(ctx, task)
+	err := c.detachNetwork(ctx, task, report)
 	if err != nil {
 		return err
 	}
@@ -53,13 +54,13 @@ func (c *Controller) killTask(ctx context.Context, task *tasksv1.Task) error {
 		return err
 	}
 
-	err = c.detachMounts(ctx, task)
+	err = c.detachMounts(ctx, task, report)
 	if !errdefs.IsNotFound(err) {
 		return err
 	}
 
 	// Detach volumes
-	return c.deleteTask(ctx, task)
+	return c.deleteTask(ctx, task, report)
 }
 
 func (c *Controller) stopTask(ctx context.Context, task *tasksv1.Task) error {
@@ -71,20 +72,22 @@ func (c *Controller) stopTask(ctx context.Context, task *tasksv1.Task) error {
 
 	// Release lease
 	defer func() {
-		err := c.clientset.LeaseV1().Release(ctx, taskID)
+		err := c.clientset.LeaseV1().Release(ctx, taskID, nodeID)
 		if err != nil {
 			c.logger.Warn("unable to release lease", "error", err, "task", taskID, "nodeID", nodeID)
 		}
 	}()
 
+	report := condition.NewForResource(task).As(c.node.GetMeta().GetName())
+
 	// Detach volumes
-	err := c.detachMounts(ctx, task)
+	err := c.detachMounts(ctx, task, report)
 	if err != nil {
 		return err
 	}
 
 	// Detach network
-	err = c.detachNetwork(ctx, task)
+	err = c.detachNetwork(ctx, task, report)
 	if err != nil {
 		return err
 	}
@@ -92,11 +95,11 @@ func (c *Controller) stopTask(ctx context.Context, task *tasksv1.Task) error {
 	// Stop the task
 	err = c.runtime.Stop(ctx, task)
 	if errs.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("error stopping task AMIRMIR: %v", err)
+		return err
 	}
 
 	// Remove any previous tasks
-	return c.deleteTask(ctx, task)
+	return c.deleteTask(ctx, task, report)
 }
 
 func (c *Controller) acquireLease(ctx context.Context, task *tasksv1.Task) error {
@@ -112,7 +115,7 @@ func (c *Controller) acquireLease(ctx context.Context, task *tasksv1.Task) error
 	// Release if task can't be provisioned
 	defer func() {
 		if err != nil {
-			err = c.clientset.LeaseV1().Release(ctx, taskID)
+			err = c.clientset.LeaseV1().Release(ctx, taskID, nodeID)
 			if err != nil {
 				c.logger.Warn("unable to release lease", "task", taskID, "node", nodeID)
 			}
@@ -128,12 +131,11 @@ func (c *Controller) acquireLease(ctx context.Context, task *tasksv1.Task) error
 	return nil
 }
 
-func (c *Controller) deleteTask(ctx context.Context, task *tasksv1.Task) error {
+func (c *Controller) deleteTask(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	ctx, span := c.tracer.Start(ctx, "controller.node.OnTaskDelete")
 	defer span.End()
 
 	taskID := task.GetMeta().GetName()
-	report := condition.NewForResource(task)
 
 	// Run cleanup early while netns still exists.
 	// This will allow the CNI plugin to remove networks without leaking.
@@ -170,9 +172,7 @@ func (c *Controller) deleteTask(ctx context.Context, task *tasksv1.Task) error {
 	return c.clientset.TaskV1().Condition(ctx, report.Report())
 }
 
-func (c *Controller) attachMounts(ctx context.Context, task *tasksv1.Task) error {
-	report := condition.NewForResource(task)
-
+func (c *Controller) attachMounts(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	// Prepare volumes/mounts
 	report.
 		Type(condition.VolumeReady).
@@ -194,9 +194,7 @@ func (c *Controller) attachMounts(ctx context.Context, task *tasksv1.Task) error
 	return c.clientset.TaskV1().Condition(ctx, report.Report())
 }
 
-func (c *Controller) detachMounts(ctx context.Context, task *tasksv1.Task) error {
-	report := condition.NewForResource(task)
-
+func (c *Controller) detachMounts(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	// Prepare volumes/mounts
 	report.
 		Type(condition.VolumeReady).
@@ -217,9 +215,7 @@ func (c *Controller) detachMounts(ctx context.Context, task *tasksv1.Task) error
 	return c.clientset.TaskV1().Condition(ctx, report.Report())
 }
 
-func (c *Controller) pullImage(ctx context.Context, task *tasksv1.Task) error {
-	report := condition.NewForResource(task)
-
+func (c *Controller) pullImage(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	// Pull image
 	report.
 		Type(condition.ImageReady).
@@ -256,6 +252,7 @@ func (c *Controller) onSchedule(ctx context.Context, task *tasksv1.Task, _ *node
 func comparable(task *tasksv1.Task) *tasksv1.Task {
 	t := proto.Clone(task).(*tasksv1.Task)
 	t.Status = nil
+	t.GetMeta().ResourceVersion = 0
 	return t
 }
 
@@ -281,17 +278,19 @@ func (c *Controller) startTask(ctx context.Context, task *tasksv1.Task) error {
 		}
 	}
 
-	err = c.deleteTask(ctx, task)
+	report := condition.NewForResource(task).As(c.node.GetMeta().GetName())
+
+	err = c.deleteTask(ctx, task, report)
 	if err != nil {
 		return err
 	}
 
-	err = c.attachMounts(ctx, task)
+	err = c.attachMounts(ctx, task, report)
 	if err != nil {
 		return err
 	}
 
-	err = c.pullImage(ctx, task)
+	err = c.pullImage(ctx, task, report)
 	if err != nil {
 		return err
 	}
@@ -301,11 +300,10 @@ func (c *Controller) startTask(ctx context.Context, task *tasksv1.Task) error {
 		return err
 	}
 
-	return c.attachNetwork(ctx, task)
+	return c.attachNetwork(ctx, task, report)
 }
 
-func (c *Controller) detachNetwork(ctx context.Context, task *tasksv1.Task) error {
-	report := condition.NewForResource(task)
+func (c *Controller) detachNetwork(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	_ = c.clientset.TaskV1().Condition(ctx, report.Type(condition.NetworkReady).False(condition.ReasonDetaching))
 
 	id, err := c.runtime.ID(ctx, task.GetMeta().GetName())
@@ -338,8 +336,7 @@ func (c *Controller) detachNetwork(ctx context.Context, task *tasksv1.Task) erro
 	return c.clientset.TaskV1().Condition(ctx, report.Type(condition.NetworkReady).WithMetadata(md).True(condition.ReasonDetached))
 }
 
-func (c *Controller) attachNetwork(ctx context.Context, task *tasksv1.Task) error {
-	report := condition.NewForResource(task)
+func (c *Controller) attachNetwork(ctx context.Context, task *tasksv1.Task, report *condition.Report) error {
 	_ = c.clientset.TaskV1().Condition(ctx, report.Type(condition.NetworkReady).False(condition.ReasonAttaching))
 
 	id, err := c.runtime.ID(ctx, task.GetMeta().GetName())

@@ -60,11 +60,11 @@ func NewCmdGetContainerSet(cfg *client.Config) *cobra.Command {
 				if err != nil {
 					logrus.Fatal(err)
 				}
-				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\n", "NAME", "REVISION", "AGE")
+				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\n", "NAME", "GENERATION", "AGE")
 				for _, c := range containers {
 					_, _ = fmt.Fprintf(wr, "%s\t%d\t%s\n",
 						c.GetMeta().GetName(),
-						c.GetMeta().GetRevision(),
+						c.GetMeta().GetGeneration(),
 						cmdutil.FormatDuration(time.Since(c.GetMeta().GetCreated().AsTime())),
 					)
 				}

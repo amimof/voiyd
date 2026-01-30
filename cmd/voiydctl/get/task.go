@@ -61,11 +61,11 @@ func NewCmdGetTask(cfg *client.Config) *cobra.Command {
 					logrus.Fatal(err)
 				}
 
-				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\t%s\t%s\t%s\n", "NAME", "REVISION", "PHASE", "REASON", "NODE", "AGE")
+				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\t%s\t%s\t%s\n", "NAME", "GENERATION", "PHASE", "REASON", "NODE", "AGE")
 				for _, c := range tasks {
 					_, _ = fmt.Fprintf(wr, "%s\t%d\t%s\t%s\t%s\t%s\n",
 						c.GetMeta().GetName(),
-						c.GetMeta().GetRevision(),
+						c.GetMeta().GetGeneration(),
 						c.GetStatus().GetPhase().GetValue(),
 						c.GetStatus().GetReason().GetValue(),
 						c.GetStatus().GetNode().GetValue(),

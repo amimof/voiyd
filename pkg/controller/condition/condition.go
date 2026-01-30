@@ -62,14 +62,40 @@ func (c *Controller) validateGeneration(observedGen, currentGen uint64) bool {
 	return true
 }
 
+func (c *Controller) validateLease(ctx context.Context, task *tasksv1.Task, reportedHolder string) bool {
+	// Skip validation of no reporter. This might be dangerous!
+	// TODO: Look this over, feels sketchy
+	if reportedHolder == "" {
+		return true
+	}
+
+	taskID := task.GetMeta().GetName()
+	lease, err := c.clientset.LeaseV1().Get(ctx, taskID)
+	if err != nil {
+		c.logger.Warn("lease validation failed, error getting lease for task", "error", err, "task", taskID)
+		return false
+	}
+
+	expectedHolder := lease.GetConfig().GetNodeId()
+
+	if expectedHolder != reportedHolder {
+		c.logger.Warn("report is invalid, reporter is not the lease holder", "holder", expectedHolder, "reporter", reportedHolder)
+		return false
+	}
+
+	return true
+}
+
 func (c *Controller) onNodeCondition(ctx context.Context, report *typesv1.ConditionReport, n *nodesv1.Node) error {
 	resourceID := report.GetResourceId()
 	observedGen := report.GetObservedGeneration()
-	expectedGen := n.GetMeta().GetRevision()
+	expectedGen := n.GetMeta().GetGeneration()
 
 	// Validate generation (prevent stale updates)
 	if !c.validateGeneration(uint64(observedGen), expectedGen) {
-		c.logger.Warn("skipping stale condition report",
+		c.logger.Warn("skipping stale node condition report",
+			"reason", report.GetReason(),
+			"status", report.GetStatus(),
 			"node", resourceID,
 			"observedGen", observedGen,
 			"currentGen", expectedGen)
@@ -108,14 +134,28 @@ func (c *Controller) onNodeCondition(ctx context.Context, report *typesv1.Condit
 func (c *Controller) onTaskCondition(ctx context.Context, report *typesv1.ConditionReport, t *tasksv1.Task) error {
 	resourceID := report.GetResourceId()
 	observedGen := report.GetObservedGeneration()
-	expectedGen := t.GetMeta().GetRevision()
+	expectedGen := t.GetMeta().GetGeneration()
+	reporterID := report.GetReporter()
 
-	// Validate generation (prevent stale updates)
+	// Validate generation
 	if !c.validateGeneration(uint64(observedGen), expectedGen) {
-		c.logger.Warn("skipping stale condition report",
-			"task", resourceID,
+		c.logger.Warn("skipping stale node condition report",
+			"reason", report.GetReason(),
+			"status", report.GetStatus(),
+			"node", resourceID,
 			"observedGen", observedGen,
 			"currentGen", expectedGen)
+		return nil
+	}
+
+	// Validate lease ownership
+	if !c.validateLease(ctx, t, reporterID) {
+		c.logger.Warn("skipping unowned node condition report",
+			"reason", report.GetReason(),
+			"status", report.GetStatus(),
+			"node", resourceID,
+			"observedVer", observedGen,
+			"currentVer", expectedGen)
 		return nil
 	}
 

@@ -135,7 +135,7 @@ func withContainerLabels(l labels.Label, task *tasksv1.Task) containerd.NewConta
 	b, _ := json.Marshal(&cniPorts)
 
 	// Fill label set with values
-	l.Set("voiyd/revision", util.Uint64ToString(task.GetMeta().GetRevision()))
+	l.Set("voiyd/revision", util.Uint64ToString(task.GetMeta().GetGeneration()))
 	l.Set("voiyd/created", task.GetMeta().GetCreated().String())
 	l.Set("voiyd/updated", task.GetMeta().GetUpdated().String())
 	l.Set("voiyd/name", task.GetMeta().GetName())

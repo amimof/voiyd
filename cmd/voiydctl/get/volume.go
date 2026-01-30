@@ -62,7 +62,7 @@ func NewCmdGetVolume(cfg *client.Config) *cobra.Command {
 				if err != nil {
 					logrus.Fatal(err)
 				}
-				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\t%s\t%s\n", "NAME", "REVISION", "READY", "TYPE", "AGE")
+				_, _ = fmt.Fprintf(wr, "%s\t%s\t%s\t%s\t%s\n", "NAME", "GENERATION", "READY", "TYPE", "AGE")
 				for _, c := range volumes {
 
 					numReady := fmt.Sprintf("%s/%d", getVolumeReadyStr(c.GetStatus().GetControllers()), len(c.GetStatus().GetControllers()))
@@ -70,7 +70,7 @@ func NewCmdGetVolume(cfg *client.Config) *cobra.Command {
 
 					_, _ = fmt.Fprintf(wr, "%s\t%d\t%s\t%s\t%s\n",
 						c.GetMeta().GetName(),
-						c.GetMeta().GetRevision(),
+						c.GetMeta().GetGeneration(),
 						numReady,
 						driverType.String(),
 						cmdutil.FormatDuration(time.Since(c.GetMeta().GetCreated().AsTime())),

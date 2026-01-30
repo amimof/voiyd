@@ -863,7 +863,9 @@ func Test_TaskService_Patch(t *testing.T) {
 			// Ignore timestamps
 			res.Task.Meta.Created = nil
 			res.Task.Meta.Updated = nil
-			res.Task.Meta.Revision = 0
+			res.Task.Meta.ResourceVersion = 0
+			res.Task.Meta.Generation = 0
+			res.Task.Meta.Uid = ""
 			if !proto.Equal(exp, res.Task) {
 				t.Errorf("\ngot:\n%v\nwant:\n%v", res.Task, exp)
 			}
